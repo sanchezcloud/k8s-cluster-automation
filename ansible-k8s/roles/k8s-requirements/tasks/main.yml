@@ -1,0 +1,47 @@
+---
+- name: Disable swap
+  shell: |
+    swapoff -a
+    sed -i '/swap/d' /etc/fstab
+
+- name: Disable UFW
+  service:
+    name: ufw
+    state: stopped
+    enabled: no
+
+- name: Remove unnecessary packages
+  apt:
+    name: 
+      - containernetworking-plugins
+      - conmon
+    state: absent
+
+- name: Create keyrings directory
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Load kernel modules configuration
+  copy:
+    content: |
+      overlay
+      br_netfilter
+    dest: /etc/modules-load.d/containerd.conf
+
+- name: Load kernel modules
+  shell: |
+    modprobe overlay
+    modprobe br_netfilter
+
+- name: Set system configurations for Kubernetes
+  copy:
+    content: |
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+    dest: /etc/sysctl.d/kubernetes.conf
+
+- name: Apply sysctl parameters
+  command: sysctl --system

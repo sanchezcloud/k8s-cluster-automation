@@ -1,0 +1,63 @@
+---
+- name: Download containerd
+  get_url:
+    url: "https://github.com/containerd/containerd/releases/download/v{{ containerd_version }}/containerd-{{ containerd_version }}-linux-amd64.tar.gz"
+    dest: /tmp/containerd.tar.gz
+
+- name: Extract containerd
+  unarchive:
+    src: /tmp/containerd.tar.gz
+    dest: /usr/local
+    remote_src: yes
+
+- name: Create systemd directory for containerd
+  file:
+    path: /usr/local/lib/systemd/system
+    state: directory
+    mode: '0755'
+
+- name: Configure containerd service
+  template:
+    src: containerd.service.j2
+    dest: /usr/local/lib/systemd/system/containerd.service
+
+- name: Reload systemd and start containerd
+  systemd:
+    daemon_reload: yes
+    name: containerd
+    state: started
+    enabled: yes
+
+- name: Download runc
+  get_url:
+    url: "https://github.com/opencontainers/runc/releases/download/v{{ runc_version }}/runc.amd64"
+    dest: /tmp/runc.amd64
+
+- name: Install runc
+  copy:
+    src: /tmp/runc.amd64
+    dest: /usr/local/sbin/runc
+    mode: '0755'
+    remote_src: yes
+
+- name: Download CNI plugins
+  get_url:
+    url: "https://github.com/containernetworking/plugins/releases/download/v{{ cni_plugins_version }}/cni-plugins-linux-amd64-v{{ cni_plugins_version }}.tgz"
+    dest: /tmp/cni-plugins.tgz
+
+- name: Create CNI directory
+  file:
+    path: /opt/cni/bin
+    state: directory
+    mode: '0755'
+
+- name: Extract CNI plugins
+  unarchive:
+    src: /tmp/cni-plugins.tgz
+    dest: /opt/cni/bin
+    remote_src: yes
+
+- name: Restart containerd
+  systemd:
+    name: containerd
+    state: restarted

@@ -1,0 +1,185 @@
+---
+- name: Setup Kubernetes Cluster
+  hosts: k8s_cluster
+  become: yes
+  roles:
+    - { role: base, tags: ['base'] }
+    - { role: k8s-requirements, tags: ['k8s-requirements'] }
+    - { role: containerd, tags: ['containerd'] }
+    - { role: kubernetes, tags: ['kubernetes'] }
+
+- name: Configure Control Plane
+  hosts: control_plane
+  become: yes
+  tasks:
+    - name: Initialize Kubernetes cluster
+      shell: kubeadm init --pod-network-cidr={{ pod_network_cidr }}
+      register: kubeadm_init
+
+- name: Create and setup kubeconfig for user.
+  hosts: control_plane
+  become: yes
+  vars:
+    user_home: "/home/{{ ansible_user }}"
+  tags: kubeconfig
+  tasks:
+    - name: Create .kube folder
+      file:
+        path: "{{ user_home }}/.kube"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Copy kubeconfig to .kube
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ user_home }}/.kube/config"
+        mode: '0755'
+        remote_src: yes
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Set KUBECONFIG variable
+      lineinfile:
+        path: "{{ user_home }}/.bashrc"
+        line: 'export KUBECONFIG="$HOME/.kube/config"'
+        state: present
+        owner: "{{ ansible_user }}"
+
+- name: Generate join command on control-plane
+  hosts: control_plane
+  become: yes
+  tags: join
+  tasks:
+    - name: Create shared directory
+      file:
+        path: /shared
+        state: directory
+        mode: '0755'
+
+    - name: Generate join command
+      command: kubeadm token create --print-join-command
+      register: join_command
+
+    - name: Save join command to file
+      copy:
+        content: |
+          #!/bin/bash
+          {{ join_command.stdout }}
+        dest: "/shared/join-cluster.sh"
+        mode: '0755'
+
+    - name: Fetch join script to Ansible controller
+      fetch:
+        src: "/shared/join-cluster.sh"
+        dest: "/tmp/join-cluster.sh"
+        flat: yes
+
+- name: Join workers to cluster
+  hosts: workers
+  become: yes
+  tags: join
+  tasks:
+    - name: Create shared directory on workers
+      file:
+        path: /shared
+        state: directory
+        mode: '0755'
+
+    - name: Copy join script to workers
+      copy:
+        src: "/tmp/join-cluster.sh"
+        dest: "/shared/join-cluster.sh"
+        mode: '0755'
+
+    - name: Display script content
+      command: cat /shared/join-cluster.sh
+      register: script_content
+
+    - name: Debug script content
+      debug:
+        var: script_content.stdout
+
+    - name: Execute join command
+      command: bash /shared/join-cluster.sh
+
+- name: Create and setup kubeconfig for root
+  hosts: control_plane
+  become: yes
+  tags: kubeconfig_root
+  tasks:
+    - name: Create .kube folder
+      file:
+        path: $HOME/.kube
+        state: directory
+        mode: '0755'
+
+    - name: Copy kubeconfig to .kube
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: $HOME/.kube/config
+        mode: '0755'
+        remote_src: yes
+
+    - name: Set KUBECONFIG variable
+      lineinfile:
+        path: /etc/environment
+        line: 'KUBECONFIG="/etc/kubernetes/admin.conf"'
+        state: present
+
+- name: Install and configure Cilium
+  hosts: control_plane
+  become: yes
+  tags: cilium_install
+  tasks:
+    - name: Get Cilium CLI version
+      uri:
+        url: https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt
+        return_content: yes
+      register: cilium_version
+
+    - name: Set architecture fact
+      command: uname -m
+      register: arch_output
+      changed_when: false
+
+    - name: Set architecture variable
+      set_fact:
+        cli_arch: "{{ 'arm64' if arch_output.stdout == 'aarch64' else 'amd64' }}"
+
+    - name: Download Cilium CLI
+      get_url:
+        url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_version.content | trim }}/cilium-linux-{{ cli_arch }}.tar.gz"
+        dest: "/tmp/cilium-linux-{{ cli_arch }}.tar.gz"
+        mode: '0644'
+
+    - name: Download Cilium CLI checksum
+      get_url:
+        url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_version.content | trim }}/cilium-linux-{{ cli_arch }}.tar.gz.sha256sum"
+        dest: "/tmp/cilium-linux-{{ cli_arch }}.tar.gz.sha256sum"
+        mode: '0644'
+
+    - name: Verify checksum
+      command: sha256sum --check /tmp/cilium-linux-{{ cli_arch }}.tar.gz.sha256sum
+      args:
+        chdir: /tmp
+      register: checksum_result
+      changed_when: false
+
+    - name: Extract Cilium CLI
+      unarchive:
+        src: "/tmp/cilium-linux-{{ cli_arch }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: yes
+
+    - name: Clean up downloaded files
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/tmp/cilium-linux-{{ cli_arch }}.tar.gz"
+        - "/tmp/cilium-linux-{{ cli_arch }}.tar.gz.sha256sum"
+
+    - name: Install Cilium
+      command: cilium install --version 1.16.3
