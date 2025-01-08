@@ -40,7 +40,7 @@ resource "proxmox_vm_qemu" "control-plane" {
   }
 
   ciuser     = "fer"
-  cipassword = "Gregory08*"
+  # cipassword = "pass"
   ipconfig0  = "ip=192.168.1.18/24,gw=192.168.1.1"
   nameserver = "8.8.8.8"
   ciupgrade  = true
@@ -90,7 +90,7 @@ resource "proxmox_vm_qemu" "worker1" {
     firewall = false
   }
   ciuser     = "fer"
-  cipassword = "Gregory08*"
+  # cipassword = "pass"
   ipconfig0  = "ip=192.168.1.20/24,gw=192.168.1.1"
   nameserver = "8.8.8.8"
   ciupgrade  = true
@@ -139,8 +139,8 @@ resource "proxmox_vm_qemu" "worker2" {
     bridge   = "vmbr0"
     firewall = false
   }
-  ciuser     = "fer"
-  cipassword = "Gregory08*"
+  ciuser     = "user"
+  # cipassword = "pass"
   ipconfig0  = "ip=192.168.1.21/24,gw=192.168.1.1"
   nameserver = "8.8.8.8"
   ciupgrade  = true
